@@ -1,0 +1,22 @@
+void function(int i, float x, string test, char c)
+{
+  if(a + b * c == b && b < 0)
+  {
+  }
+  elif(tset)
+  {}
+  elif(test2)
+  {
+    return true;
+  }
+  else
+  {
+    return;
+  }
+  for(int i = 0;i<100;i = i + 1)
+  {
+  }
+  while(i[10 + a]<0)
+  {
+  }
+}

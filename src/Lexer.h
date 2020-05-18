@@ -7,6 +7,8 @@
 #include <sstream>
 #include <iostream>
 
+#define READ_RETURN(ret) { source >> c; return ret;}
+
 class Lexer
 {
   public:
@@ -22,6 +24,9 @@ class Lexer
         tokens.push_back(t);
         ReadWhiteSpace(source, c);
       }
+      if(t == Token::INVALID)
+        return {Token::INVALID};
+
       return tokens;
     }
 
@@ -38,14 +43,14 @@ class Lexer
       if(IsName(c))
       {
         std::string str = ReadName(source, c);
-        auto it = Tokens::validTokens.find(str);
-        if(it == Tokens::validTokens.end())
+        Token reservedToken = Tokens::GetReservedToken(str);
+        if(reservedToken == Token::INVALID)
         {
           return Token::NAME;
         }
         else
         {
-          return it->second;
+          return reservedToken;
         }
       }
       else if(IsNumber(c))
@@ -65,10 +70,7 @@ class Lexer
       }
       else
       {
-        Token token = ReadSymbol(source, c);
-        if(token != Token::INVALID)
-          source >> c;
-        return token;
+        return ReadSymbol(source, c);
       }
       if(!source.eof())
       {
@@ -174,32 +176,39 @@ class Lexer
 
     static Token ReadSymbol(std::istream& source, char& c)
     {
-      if(c == '(') return Token::OPEN_PARAM;
-      if(c == ')') return Token::CLOSE_PARAM;
-      if(c == '[') return Token::OPEN_SQUARE;
-      if(c == ']') return Token::CLOSE_SQUARE;
-      if(c == '{') return Token::OPEN_CURLY;
-      if(c == '}') return Token::CLOSE_CURLY;
-      if(c == '=') return Token::EQUAL;
-      if(c == '+') return Token::PLUS;
-      if(c == '-') return Token::MINUS;
-      if(c == '*') return Token::MULTIPLY;
-      if(c == '/') return Token::DIVIDE;
-      if(c == '!') return Token::EXCLAMATION;
-      if(c == '&') return Token::AND;
-      if(c == '|') return Token::OR;
-      if(c == '^') return Token::XOR;
-      if(c == '~') return Token::NOT;
-      if(c == '<') return Token::LESS;
-      if(c == '>') return Token::GREATER;
-      if(c == '#') return Token::HASH;
-      if(c == '.') return Token::DOT;
-      if(c == ',') return Token::COMMA;
-      if(c == ':') return Token::COLON;
-      if(c == ';') return Token::SEMICOLON;
+      if(c == '(') READ_RETURN(Token::OPEN_PARAM);
+      if(c == ')') READ_RETURN(Token::CLOSE_PARAM);
+      if(c == '[') READ_RETURN(Token::OPEN_SQUARE);
+      if(c == ']') READ_RETURN(Token::CLOSE_SQUARE);
+      if(c == '{') READ_RETURN(Token::OPEN_CURLY);
+      if(c == '}') READ_RETURN(Token::CLOSE_CURLY);
+      if(c == '=') READ_RETURN(ReadSymbolSuffix(source, c, '=', Token::ASSIGN, Token::EQUAL));
+      if(c == '+') READ_RETURN(Token::ADD);
+      if(c == '-') READ_RETURN(Token::SUB);
+      if(c == '*') READ_RETURN(Token::MUL);
+      if(c == '/') READ_RETURN(Token::DIV);
+      if(c == '!') READ_RETURN(ReadSymbolSuffix(source, c, '=', Token::NOT, Token::NEQUAL));
+      if(c == '&') READ_RETURN(ReadSymbolSuffix(source, c, '&', Token::BIN_AND, Token::AND));
+      if(c == '|') READ_RETURN(ReadSymbolSuffix(source, c, '|', Token::BIN_OR, Token::OR));
+      if(c == '^') READ_RETURN(Token::BIN_XOR);
+      if(c == '~') READ_RETURN(Token::BIN_NOT);
+      if(c == '<') READ_RETURN(ReadSymbolSuffix(source, c, '=', Token::LT, Token::LTE));
+      if(c == '>') READ_RETURN(ReadSymbolSuffix(source, c, '=', Token::GT, Token::GTE));;
+      if(c == '#') READ_RETURN(Token::HASH);
+      if(c == '.') READ_RETURN(Token::DOT);
+      if(c == ',') READ_RETURN(Token::COMMA);
+      if(c == ':') READ_RETURN(Token::COLON);
+      if(c == ';') READ_RETURN(Token::SEMICOLON);
 
       std::cerr << "Invalid symbol: \"" << c << "\"" << std::endl;
       return Token::INVALID;
+    }
+
+    // Returns different Tokens depending on if the suffix exists behind char.
+    static Token ReadSymbolSuffix(std::istream& source, char& c, char suffix, Token noSuffix, Token withSuffix)
+    {
+      if(c == suffix) READ_RETURN(withSuffix);
+      return noSuffix;
     }
 
     static std::string ReadName(std::istream& source, char& c)
