@@ -4,6 +4,7 @@
 #include "Parser.h"
 
 #include <iostream>
+#include <cstring>
 #include <fstream>
 
 
@@ -13,18 +14,26 @@ int main(int argc, char** argv)
     std::cout << "No input file" << std::endl;
   std::ifstream source(argv[1]);
   std::cout << "Compiling: " << argv[1] << std::endl;
-  std::vector<Token> tokens = Lexer::Read(source);
-  int i = 0;
-  for(auto token : tokens)
+  std::vector<TokenPos> tokens = Lexer::Read(source);
+  if(argc >= 3)
   {
-    std::cout << i << ": " << Tokens::GetName(token) << std::endl;
-    i++;
+    if(strcmp(argv[2], "-t") == 0)
+    {
+      int i = 0;
+      for(auto token : tokens)
+      {
+        std::cout << i << ": " << Tokens::GetName(token.token) << std::endl;
+        i++;
+      }
+    }
+
+    std::cout << std::endl;
   }
 
-  /* int j = int k = 9; */
-  std::cout << std::endl;
-
-  Parser::Parse(tokens);
+  if(Parser::Parse(tokens))
+  {
+    std::cout << "Succesfully Parsed file!" << std::endl;
+  }
 
   return 0;
 }

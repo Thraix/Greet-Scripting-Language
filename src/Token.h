@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <iostream>
 
 #define LIST_TOKENS \
   TOKEN(INVALID) \
@@ -102,3 +103,15 @@ std::map<std::string_view, Token> Tokens::reservedTokens{
       LIST_TOKENS
     };
 #undef TOKEN
+
+struct TokenPos
+{
+  Token token;
+  size_t line;
+  size_t column;
+
+  friend std::ostream& operator<<(std::ostream& stream, const TokenPos& token)
+  {
+    return stream << Tokens::GetName(token.token) << ":" << token.line << "," << token.column;
+  }
+};

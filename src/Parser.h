@@ -5,65 +5,79 @@
 #include <vector>
 #include <iostream>
 
-#define VALID_TOKEN(token) if(!data.Read(token)) { PrintError(data, data.next, token); return false; };
+#define VALID_TOKEN(token) if(!data.Read(token)) { PrintError(data, data.Top(), token); return false; };
 #define VALID_PRODUCTION(production) \
   if(!production) \
 { \
-  if(data.printFail) \
-  std::cerr << "Invalid product: " << #production << " at " << Tokens::GetName(data.next) << " linenr: " << __LINE__ << std::endl;\
   return false; \
 }
 
 struct ParseData
 {
-  const std::vector<Token>& tokens;
+  const std::vector<TokenPos>& tokens;
   size_t pos;
-  Token next;
-  bool printFail = true;
-  ParseData(const std::vector<Token>& tokens)
-    : tokens{tokens}, pos{0}, next{tokens[0]}
+  ParseData(const std::vector<TokenPos>& tokens)
+    : tokens{tokens}, pos{0}
   {}
 
   bool Read(Token token)
   {
-    if(next != token)
+    if(Top() != token)
       return false;
     if(pos >= tokens.size())
     {
       std::cerr << "No more tokens to be read" << std::endl;
       return false;
     }
-    next = tokens[++pos];
+    ++pos;
     return true;
   }
 
   void Backtrack(size_t pos)
   {
     this->pos = pos;
-    next = tokens[pos];
+  }
+
+  bool Empty()
+  {
+    return pos == tokens.size();
+  }
+
+  Token Top()
+  {
+    return tokens[pos].token;
+  }
+
+  TokenPos TopPos()
+  {
+    return tokens[pos];
   }
 };
 
 class Parser
 {
   public:
-    static void Parse(const std::vector<Token>& tokens)
+    static bool Parse(const std::vector<TokenPos>& tokens)
     {
       ParseData data{tokens};
-      if(!Function(data))
+      while(!data.Empty())
       {
-        std::cerr << "Failed to parse file" << std::endl;
+        if(!Function(data))
+        {
+          std::cerr << "Failed to parse file" << std::endl;
+          std::cerr << "Invalid symbol at " << data.TopPos() << std::endl;
+          return false;
+        }
       }
+      return true;
     }
 
   private:
+
+    // FUNC -> FTYPE name ( FPARAMS ) { Ss }
     static bool Function(ParseData& data)
     {
-      if(!FunctionType(data))
-      {
-        PrintError(data, "primitive");
-        return false;
-      }
+      VALID_PRODUCTION(FunctionType(data));
       VALID_TOKEN(Token::NAME);
       VALID_TOKEN(Token::OPEN_PARAM);
       VALID_PRODUCTION(FunctionParams(data));
@@ -79,8 +93,8 @@ class Parser
     static bool Statements(ParseData& data)
     {
       size_t pos = data.pos;
-      VALID_PRODUCTION(Statement(data));
-      if(data.pos != pos)
+      // If something was read, read another statement
+      if(Statement(data))
       {
         return Statements(data);
       }
@@ -88,11 +102,11 @@ class Parser
     }
 
     // S -> IF
-    //   -> for(EA;E;EA) { Ss }
-    //   -> while(E) { Ss }
+    //   -> for ( EA ; E ; EA ) { Ss }
+    //   -> while ( E ) { Ss }
     static bool Statement(ParseData& data)
     {
-      if(data.Read(Token::IF))
+      if(data.Top() == Token::IF)
       {
         return StatementIf(data);
       }
@@ -105,9 +119,7 @@ class Parser
         VALID_TOKEN(Token::SEMICOLON);
         VALID_PRODUCTION(Expression(data));
         VALID_TOKEN(Token::CLOSE_PARAM);
-        VALID_TOKEN(Token::OPEN_CURLY);
-        VALID_PRODUCTION(Statements(data));
-        VALID_TOKEN(Token::CLOSE_CURLY);
+        VALID_PRODUCTION(ControlFlowBody(data));
         return true;
       }
       else if(data.Read(Token::WHILE))
@@ -115,17 +127,14 @@ class Parser
         VALID_TOKEN(Token::OPEN_PARAM);
         VALID_PRODUCTION(Expression(data));
         VALID_TOKEN(Token::CLOSE_PARAM);
-        VALID_TOKEN(Token::OPEN_CURLY);
-        VALID_PRODUCTION(Statements(data));
-        VALID_TOKEN(Token::CLOSE_CURLY);
+        VALID_PRODUCTION(ControlFlowBody(data));
         return true;
       }
       else if(data.Read(Token::RETURN))
       {
-        data.printFail = false;
         Expression(data);
-        data.printFail = true;
         VALID_TOKEN(Token::SEMICOLON);
+        return true;
       }
       else if(data.Read(Token::SEMICOLON))
       {
@@ -133,68 +142,68 @@ class Parser
       }
       else
       {
-        data.printFail = false;
         int pos = data.pos;
         if(Expression(data))
         {
-          data.printFail = true;
           VALID_TOKEN(Token::SEMICOLON);
           return true;
         }
-        data.printFail = true;
 
         // Failed to parse if the pos changed but expression failed
-        if(pos != data.pos)
-        {
-          return false;
-        }
+        return false;
+      }
+      return false;
+    }
+
+    // IF -> if ( E ) CFBODY
+    //    -> if ( E ) CFBODY ELSE_IF
+    //    -> if ( E ) CFBODY ELSE
+    static bool StatementIf(ParseData& data)
+    {
+      VALID_TOKEN(Token::IF);
+      VALID_TOKEN(Token::OPEN_PARAM);
+      VALID_PRODUCTION(Expression(data));
+      VALID_TOKEN(Token::CLOSE_PARAM);
+      VALID_PRODUCTION(ControlFlowBody(data));
+
+      if(data.Top() == Token::ELSE_IF)
+      {
+        return StatementElseIf(data);
+      }
+      else if(data.Top() == Token::ELSE)
+      {
+        return StatementElse(data);
       }
       return true;
     }
 
-    // IF -> if(E) { Ss }
-    //    -> if(E) { Ss } ELSE_IF
-    //    -> if(E) { Ss } ELSE
-    static bool StatementIf(ParseData& data)
-    {
-      VALID_TOKEN(Token::OPEN_PARAM);
-      VALID_PRODUCTION(Expression(data));
-      VALID_TOKEN(Token::CLOSE_PARAM);
-      VALID_TOKEN(Token::OPEN_CURLY);
-      VALID_PRODUCTION(Statements(data));
-      VALID_TOKEN(Token::CLOSE_CURLY);
-      if(data.Read(Token::ELSE_IF))
-        return StatementElseIf(data);
-      else if(data.Read(Token::ELSE))
-        return StatementElse(data);
-      return true;
-    }
-
-    // IF -> elif(E) { Ss }
-    //    -> elif(E) { Ss } ELSE_IF
-    //    -> elif(E) { Ss } ELSE
+    // IF -> elif ( E ) CFBODY
+    //    -> elif ( E ) CFBODY ELSE_IF
+    //    -> elif ( E ) CFBODY ELSE
     static bool StatementElseIf(ParseData& data)
     {
+      VALID_TOKEN(Token::ELSE_IF);
       VALID_TOKEN(Token::OPEN_PARAM);
       VALID_PRODUCTION(Expression(data));
       VALID_TOKEN(Token::CLOSE_PARAM);
-      VALID_TOKEN(Token::OPEN_CURLY);
-      VALID_PRODUCTION(Statements(data));
-      VALID_TOKEN(Token::CLOSE_CURLY);
+      VALID_PRODUCTION(ControlFlowBody(data));
 
-      if(data.Read(Token::ELSE_IF))
+      if(data.Top() == Token::ELSE_IF)
+      {
         return StatementElseIf(data);
-      else if(data.Read(Token::ELSE))
+      }
+      else if(data.Top() == Token::ELSE)
+      {
         return StatementElse(data);
+      }
       return true;
     }
 
-    // ELSE -> { Ss }
+    // ELSE -> else CFBODY
     static bool StatementElse(ParseData& data)
     {
-      VALID_TOKEN(Token::OPEN_CURLY);
-      VALID_PRODUCTION(Statements(data));
-      VALID_TOKEN(Token::CLOSE_CURLY);
+      VALID_TOKEN(Token::ELSE);
+      VALID_PRODUCTION(ControlFlowBody(data));
       return true;
     }
 
@@ -224,9 +233,13 @@ class Parser
     {
       VALID_PRODUCTION(ExpressionCompare(data));
       if(data.Read(Token::AND))
+      {
         return ExpressionLogical(data);
+      }
       else if(data.Read(Token::OR))
+      {
         return ExpressionLogical(data);
+      }
       return true;
     }
 
@@ -289,7 +302,7 @@ class Parser
     //     -> EV / EMD
     static bool ExpressionMulDiv(ParseData& data)
     {
-      VALID_PRODUCTION(ExpressionValue(data));
+      VALID_PRODUCTION(ExpressionUnary(data));
       if(data.Read(Token::MUL))
       {
         return ExpressionMulDiv(data);
@@ -301,19 +314,44 @@ class Parser
       return true;
     }
 
-    // EV -> !EV
-    //    -> name
-    //    -> number
-    //    -> string
-    //    -> char
-    //    -> (E)
-    static bool ExpressionValue(ParseData& data)
+    // EU -> ! EU
+    //    -> EP
+    static bool ExpressionUnary(ParseData& data)
     {
       if(data.Read(Token::NOT))
       {
-        return ExpressionValue(data);
+        return ExpressionUnary(data);
       }
-      else if(data.Read(Token::NUMBER))
+      else if(data.Read(Token::SUB))
+      {
+        return ExpressionUnary(data);
+      }
+      VALID_PRODUCTION(RValue(data));
+      return true;
+    }
+
+    // EP -> ( E )
+    //    -> RVAL
+    static bool ExpressionParam(ParseData& data)
+    {
+      if(data.Read(Token::OPEN_PARAM))
+      {
+        return Expression(data);
+      }
+      VALID_PRODUCTION(RValue(data));
+      return true;
+    }
+
+    // RVAL -> number
+    //      -> string
+    //      -> char
+    //      -> ( E )
+    //      -> name INDEX
+    //      -> name ( FARGS )
+    //      -> name
+    static bool RValue(ParseData& data)
+    {
+      if(data.Read(Token::NUMBER))
       {
         return true;
       }
@@ -331,7 +369,21 @@ class Parser
         VALID_TOKEN(Token::CLOSE_PARAM);
         return true;
       }
-      return LValue(data);
+      else if(data.Read(Token::NAME))
+      {
+        if(data.Top() == Token::OPEN_SQUARE)
+        {
+          VALID_PRODUCTION(Indexing(data));
+        }
+        if(data.Top() == Token::OPEN_PARAM)
+        {
+          VALID_TOKEN(Token::OPEN_PARAM);
+          VALID_PRODUCTION(FunctionArguments(data));
+          VALID_TOKEN(Token::CLOSE_PARAM);
+        }
+        return true;
+      }
+      return false;
     }
 
     // LVALD -> LVAL
@@ -341,20 +393,29 @@ class Parser
       Primitive(data);
       return LValue(data);
     }
-    // LVAL -> name[E]
+
+    // LVAL -> name INDEX
     //      -> name
     static bool LValue(ParseData& data)
     {
       if(data.Read(Token::NAME))
       {
-        if(data.Read(Token::OPEN_SQUARE))
+        if(data.Top() == Token::OPEN_SQUARE)
         {
-          VALID_PRODUCTION(Expression(data));
-          VALID_TOKEN(Token::CLOSE_SQUARE);
+          VALID_PRODUCTION(Indexing(data));
         }
         return true;
       }
       return false;
+    }
+
+    // INDEX -> [ E ]
+    static bool Indexing(ParseData& data)
+    {
+      VALID_TOKEN(Token::OPEN_SQUARE);
+      VALID_PRODUCTION(Expression(data));
+      VALID_TOKEN(Token::CLOSE_SQUARE);
+      return true;
     }
 
     // FTYPE -> PRIM
@@ -372,24 +433,58 @@ class Parser
       return true;
     }
 
-    // FPARAM -> PRIM name
-    //        -> PRIM name, FPARAM
+    // FARGS -> name
+    //       -> name, FARGS
+    static bool FunctionArguments(ParseData& data)
+    {
+      if(data.Top() == Token::CLOSE_PARAM)
+        return true;
+
+      VALID_PRODUCTION(Expression(data));
+      if(data.Read(Token::COMMA))
+      {
+        return FunctionArguments(data);
+      }
+      return true;
+    }
+
+    // CFBODY -> { Ss }
+    //        -> S
+    static bool ControlFlowBody(ParseData& data)
+    {
+      if(data.Top() == Token::OPEN_CURLY)
+      {
+        VALID_TOKEN(Token::OPEN_CURLY);
+        VALID_PRODUCTION(Statements(data));
+        VALID_TOKEN(Token::CLOSE_CURLY);
+      }
+      else
+      {
+        VALID_PRODUCTION(Statement(data));
+      }
+      return true;
+    }
+
+    // FPARAMS -> PRIM name
+    //         -> PRIM name, FPARAMS
     static bool FunctionParams(ParseData& data)
     {
-      if(data.next == Token::CLOSE_PARAM)
+      if(data.Top() == Token::CLOSE_PARAM)
         return true;
 
       VALID_PRODUCTION(Primitive(data));
       VALID_TOKEN(Token::NAME);
       if(data.Read(Token::COMMA))
+      {
         return FunctionParams(data);
+      }
       return true;
     }
 
     // PRIM -> int
     //      -> float
-    //      -> char
-    //      -> string
+    //      -> char_k
+    //      -> string_k
     static bool Primitive(ParseData& data)
     {
       if(data.Read(Token::INT))
@@ -415,11 +510,5 @@ class Parser
     {
       std::cerr << "Invalid token at " << data.pos << std::endl;
       std::cerr << "Got " << Tokens::GetName(got) << " but expected " << Tokens::GetName(expected) << std::endl;
-    }
-
-    static void PrintError(ParseData& data, const std::string& type)
-    {
-      std::cerr << "Invalid token at " << data.pos << std::endl;
-      std::cerr << "Expected " << type << std::endl;
     }
 };

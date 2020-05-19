@@ -7,111 +7,155 @@
 #include <sstream>
 #include <iostream>
 
-#define READ_RETURN(ret) { source >> c; return ret;}
+#define READ_RETURN(ret) { data.Read(); return ret;}
 
+struct LexerData
+{
+  private:
+    std::istream& stream;
+    char c;
+    size_t lineNr;
+    size_t columnNr;
+
+  public:
+    LexerData(std::istream& stream)
+      : stream{stream}, c{'\0'}, lineNr{1}, columnNr{1}
+    {
+      stream >> c;
+    }
+
+    char Read()
+    {
+      stream.get(c);
+      columnNr++;
+      if(c == '\n')
+      {
+        lineNr++;
+        columnNr = 0;
+      }
+      return c;
+    }
+
+    char Top()
+    {
+      return c;
+    }
+
+    bool Empty()
+    {
+      return stream.eof();
+    }
+
+    size_t LineNr()
+    {
+      return lineNr;
+    }
+    size_t ColumnNr()
+    {
+      return columnNr;
+    }
+};
 class Lexer
 {
   public:
-    static std::vector<Token> Read(std::istream& source)
+    static std::vector<TokenPos> Read(std::istream& source)
     {
-      std::vector<Token> tokens;
-      char c;
-      source >> std::noskipws;
-      source >> c;
-      Token t;
-      while(!source.eof() && ((t = ReadToken(source, c)) != Token::INVALID))
+      std::vector<TokenPos> tokens;
+      LexerData data{source};
+      TokenPos t;
+      while(!data.Empty() && ((t = ReadToken(data)).token != Token::INVALID))
       {
         tokens.push_back(t);
-        ReadWhiteSpace(source, c);
+        ReadWhiteSpace(data);
       }
-      if(t == Token::INVALID)
-        return {Token::INVALID};
+      if(t.token == Token::INVALID)
+        return {t};
 
       return tokens;
     }
 
 
   private:
-    static void ReadWhiteSpace(std::istream& source, char& c)
+    static void ReadWhiteSpace(LexerData& data)
     {
-      while(!source.eof() && (c == ' ' || c == '\n' || c == '\r' || c == '\t'))
-        source >> c;
+      while(!data.Empty() && (data.Top() == ' ' || data.Top() == '\n' || data.Top() == '\r' || data.Top() == '\t'))
+        data.Read();
     }
 
-    static Token ReadToken(std::istream& source, char& c)
+    static TokenPos ReadToken(LexerData& data)
     {
-      if(IsName(c))
+      size_t line = data.LineNr();
+      size_t column = data.ColumnNr();
+      if(IsName(data.Top()))
       {
-        std::string str = ReadName(source, c);
+        std::string str = ReadName(data);
         Token reservedToken = Tokens::GetReservedToken(str);
         if(reservedToken == Token::INVALID)
         {
-          return Token::NAME;
+          return {Token::NAME, line, column};
         }
         else
         {
-          return reservedToken;
+          return {reservedToken, line, column};
         }
       }
-      else if(IsNumber(c))
+      else if(IsNumber(data.Top()))
       {
-        ReadNumber(source, c);
-        return Token::NUMBER;
+        ReadNumber(data);
+        return {Token::NUMBER, line, column};
       }
-      else if(IsString(c))
+      else if(IsString(data.Top()))
       {
-        ReadString(source, c);
-        return Token::STRING;
+        ReadString(data);
+        return {Token::STRING, line, column};
       }
-      else if(IsChar(c))
+      else if(IsChar(data.Top()))
       {
-        char i = ReadChar(source, c);
-        return Token::CHAR;
+        char i = ReadChar(data);
+        return {Token::CHAR, line, column};
       }
       else
       {
-        return ReadSymbol(source, c);
+        return {ReadSymbol(data), line, column};
       }
-      if(!source.eof())
+      if(!data.Empty())
       {
-        std::string s;
-        std::getline(source, s);
-        std::cerr << "Invalid token at: " << s << std::endl;
+        std::cerr << "Invalid token at: " << line << ":" << column << std::endl;
       }
-      return Token::INVALID;
+      return {Token::INVALID, line, column};
     }
 
-    static bool IsLetter(char& c)
+    static bool IsLetter(char c)
     {
       return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
     }
 
-    static bool IsNumber(char& c)
+    static bool IsNumber(char c)
     {
       return c >= '0' && c <= '9';
     }
 
-    static bool IsName(char& c)
+    static bool IsName(char c)
     {
       return IsLetter(c) || c == '_';
     }
 
-    static bool IsString(char& c)
+    static bool IsString(char c)
     {
       return c == '"';
     }
 
-    static bool IsChar(char& c)
+    static bool IsChar(char c)
     {
       return c == '\'';
     }
 
-    static bool IsEscapeCharacter(char& c)
+    static bool IsEscapeCharacter(char c)
     {
       return c == 'n' || c == 'r' || c == 't' || c == '\\' || c == '"' || c == '\'' || c == '0';
     }
 
-    static bool GetEscapeCharacter(char& c)
+    static bool GetEscapeCharacter(char c)
     {
       if(c == 'n') return '\n';
       if(c == 'r') return '\r';
@@ -124,115 +168,113 @@ class Lexer
       return '\0';
     }
 
-    static std::string ReadString(std::istream& source, char& c)
+    static std::string ReadString(LexerData& data)
     {
       std::stringstream ss;
-      source >> c;
-      char lastchar = c;
-      while(!source.eof() && !(c == '"' && lastchar != '\\'))
+      data.Read();
+      char lastchar = data.Top();
+      while(!data.Empty() && !(data.Top() == '"' && lastchar != '\\'))
       {
-        ss << c;
-        lastchar = c;
-        source >> c;
+        ss << data.Top();
+        lastchar = data.Top();
+        data.Read();
       }
-      source >> c;
+      data.Read();
       return ss.str();
     }
 
-    static char ReadChar(std::istream& source, char& c)
+    static char ReadChar(LexerData& data)
     {
       char ret = '\0';
       std::stringstream ss;
-      source >> c;
-      ret = c;
-      if(c == '\\')
+      ret = data.Read();
+      if(data.Top() == '\\')
       {
-        source >> c;
-        if(!IsEscapeCharacter(c))
+        data.Read();
+        if(!IsEscapeCharacter(data.Top()))
         {
-          std::cerr << "Invalid escape character: " << c << std::endl;
+          std::cerr << "Invalid escape character: " << data.Top() << std::endl;
           return '\0';
         }
-        ret = GetEscapeCharacter(c);
-        source >> c;
+        ret = GetEscapeCharacter(data.Top());
+        data.Read();
       }
       else
       {
-        if(c == '\'')
+        if(data.Top() == '\'')
         {
           std::cerr << "No character specified within char" << std::endl;
           return '\0';
         }
-        source >> c;
+        data.Read();
       }
-      if(c != '\'')
+      if(data.Top() != '\'')
       {
         std::cerr << "More than 1 character within single quote" << std::endl;
         return '\0';
       }
-      source >> c;
+      data.Read();
       return ret;
     }
 
-    static Token ReadSymbol(std::istream& source, char& c)
+    static Token ReadSymbol(LexerData& data)
     {
-      if(c == '(') READ_RETURN(Token::OPEN_PARAM);
-      if(c == ')') READ_RETURN(Token::CLOSE_PARAM);
-      if(c == '[') READ_RETURN(Token::OPEN_SQUARE);
-      if(c == ']') READ_RETURN(Token::CLOSE_SQUARE);
-      if(c == '{') READ_RETURN(Token::OPEN_CURLY);
-      if(c == '}') READ_RETURN(Token::CLOSE_CURLY);
-      if(c == '=') READ_RETURN(ReadSymbolSuffix(source, c, '=', Token::ASSIGN, Token::EQUAL));
-      if(c == '+') READ_RETURN(Token::ADD);
-      if(c == '-') READ_RETURN(Token::SUB);
-      if(c == '*') READ_RETURN(Token::MUL);
-      if(c == '/') READ_RETURN(Token::DIV);
-      if(c == '!') READ_RETURN(ReadSymbolSuffix(source, c, '=', Token::NOT, Token::NEQUAL));
-      if(c == '&') READ_RETURN(ReadSymbolSuffix(source, c, '&', Token::BIN_AND, Token::AND));
-      if(c == '|') READ_RETURN(ReadSymbolSuffix(source, c, '|', Token::BIN_OR, Token::OR));
-      if(c == '^') READ_RETURN(Token::BIN_XOR);
-      if(c == '~') READ_RETURN(Token::BIN_NOT);
-      if(c == '<') READ_RETURN(ReadSymbolSuffix(source, c, '=', Token::LT, Token::LTE));
-      if(c == '>') READ_RETURN(ReadSymbolSuffix(source, c, '=', Token::GT, Token::GTE));;
-      if(c == '#') READ_RETURN(Token::HASH);
-      if(c == '.') READ_RETURN(Token::DOT);
-      if(c == ',') READ_RETURN(Token::COMMA);
-      if(c == ':') READ_RETURN(Token::COLON);
-      if(c == ';') READ_RETURN(Token::SEMICOLON);
+      if(data.Top() == '(') READ_RETURN(Token::OPEN_PARAM);
+      if(data.Top() == ')') READ_RETURN(Token::CLOSE_PARAM);
+      if(data.Top() == '[') READ_RETURN(Token::OPEN_SQUARE);
+      if(data.Top() == ']') READ_RETURN(Token::CLOSE_SQUARE);
+      if(data.Top() == '{') READ_RETURN(Token::OPEN_CURLY);
+      if(data.Top() == '}') READ_RETURN(Token::CLOSE_CURLY);
+      if(data.Top() == '=') READ_RETURN(ReadSymbolSuffix(data, '=', Token::ASSIGN, Token::EQUAL));
+      if(data.Top() == '+') READ_RETURN(Token::ADD);
+      if(data.Top() == '-') READ_RETURN(Token::SUB);
+      if(data.Top() == '*') READ_RETURN(Token::MUL);
+      if(data.Top() == '/') READ_RETURN(Token::DIV);
+      if(data.Top() == '!') READ_RETURN(ReadSymbolSuffix(data, '=', Token::NOT, Token::NEQUAL));
+      if(data.Top() == '&') READ_RETURN(ReadSymbolSuffix(data, '&', Token::BIN_AND, Token::AND));
+      if(data.Top() == '|') READ_RETURN(ReadSymbolSuffix(data, '|', Token::BIN_OR, Token::OR));
+      if(data.Top() == '^') READ_RETURN(Token::BIN_XOR);
+      if(data.Top() == '~') READ_RETURN(Token::BIN_NOT);
+      if(data.Top() == '<') READ_RETURN(ReadSymbolSuffix(data, '=', Token::LT, Token::LTE));
+      if(data.Top() == '>') READ_RETURN(ReadSymbolSuffix(data, '=', Token::GT, Token::GTE));;
+      if(data.Top() == '#') READ_RETURN(Token::HASH);
+      if(data.Top() == '.') READ_RETURN(Token::DOT);
+      if(data.Top() == ',') READ_RETURN(Token::COMMA);
+      if(data.Top() == ':') READ_RETURN(Token::COLON);
+      if(data.Top() == ';') READ_RETURN(Token::SEMICOLON);
 
-      std::cerr << "Invalid symbol: \"" << c << "\"" << std::endl;
       return Token::INVALID;
     }
 
     // Returns different Tokens depending on if the suffix exists behind char.
-    static Token ReadSymbolSuffix(std::istream& source, char& c, char suffix, Token noSuffix, Token withSuffix)
+    static Token ReadSymbolSuffix(LexerData& data, char suffix, Token noSuffix, Token withSuffix)
     {
-      if(c == suffix) READ_RETURN(withSuffix);
+      if(data.Top() == suffix) READ_RETURN(withSuffix);
       return noSuffix;
     }
 
-    static std::string ReadName(std::istream& source, char& c)
+    static std::string ReadName(LexerData& data)
     {
       std::stringstream ss;
-      while(IsLetter(c) || IsNumber(c) || c == '_')
+      while(IsLetter(data.Top()) || IsNumber(data.Top()) || data.Top() == '_')
       {
-        ss << c;
-        source >> c;
+        ss << data.Top();
+        data.Read();
       }
 
       return ss.str();
     }
 
-    static std::string ReadNumber(std::istream& source, char& c)
+    static std::string ReadNumber(LexerData& data)
     {
       std::stringstream ss;
       bool hasReadComma = false;
-      while(IsNumber(c) || (c == '.' && !hasReadComma))
+      while(IsNumber(data.Top()) || (data.Top() == '.' && !hasReadComma))
       {
-        if(c == '.')
+        if(data.Top() == '.')
           hasReadComma = true;
-        ss << c;
-        source >> c;
+        ss << data.Top();
+        data.Read();
       }
 
       return ss.str();

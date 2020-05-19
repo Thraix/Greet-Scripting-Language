@@ -1,6 +1,7 @@
 <makegen>
   <configuration name="Release">
     <argument>examples/parser.gr</argument>
+    <cflag>-g</cflag>
     <generatehfile>false</generatehfile>
     <hfilename>lexer.h</hfilename>
     <outputdir>bin/</outputdir>
