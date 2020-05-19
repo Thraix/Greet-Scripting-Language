@@ -1,15 +1,17 @@
 #pragma once
 
 #include "Token.h"
+#include "Ast.h"
 
 #include <vector>
 #include <iostream>
 
-#define VALID_TOKEN(token) if(!data.Read(token)) { PrintError(data, data.Top(), token); return false; };
-#define VALID_PRODUCTION(production) \
-  if(!production) \
+#define VALID_TOKEN(token) if(!data.Read(token)) { PrintError(data, data.Top(), token); return nullptr; };
+#define VALID_PRODUCTION(type, node, production) \
+  type* node = production; \
+  if(node == nullptr) \
 { \
-  return false; \
+  return nullptr; \
 }
 
 struct ParseData
@@ -62,12 +64,14 @@ class Parser
       ParseData data{tokens};
       while(!data.Empty())
       {
-        if(!Function(data))
+        AstFunction* func = Function(data);
+        if(func == nullptr)
         {
           std::cerr << "Failed to parse file" << std::endl;
           std::cerr << "Invalid symbol at " << data.TopPos() << std::endl;
           return false;
         }
+        std::cout << func << std::endl;
       }
       return true;
     }
@@ -75,36 +79,41 @@ class Parser
   private:
 
     // FUNC -> FTYPE name ( FPARAMS ) { Ss }
-    static bool Function(ParseData& data)
+    static AstFunction* Function(ParseData& data)
     {
-      VALID_PRODUCTION(FunctionType(data));
+      Type type;
+      if((type = FunctionType(data)) == Type::INVALID)
+        return nullptr;
       VALID_TOKEN(Token::NAME);
       VALID_TOKEN(Token::OPEN_PARAM);
-      VALID_PRODUCTION(FunctionParams(data));
+      VALID_PRODUCTION(AstFuncParams, params, FunctionParams(data));
       VALID_TOKEN(Token::CLOSE_PARAM);
       VALID_TOKEN(Token::OPEN_CURLY);
-      VALID_PRODUCTION(Statements(data));
+      VALID_PRODUCTION(AstStatements, body, Statements(data));
       VALID_TOKEN(Token::CLOSE_CURLY);
-      return true;
+      return new AstFunction(new AstName(type), params, body);
     }
 
     // Ss -> S
     //    -> S Ss
-    static bool Statements(ParseData& data)
+    static AstStatements* Statements(ParseData& data)
     {
-      size_t pos = data.pos;
-      // If something was read, read another statement
-      if(Statement(data))
+      AstStatements* statements = new AstStatements(Statement(data), nullptr);
+      if(statements->first == nullptr)
+        return statements;
+
+      AstStatement* statement;
+      while((statement = Statement(data)) != nullptr)
       {
-        return Statements(data);
+        statements->tail = new AstStatements(statement, nullptr);
       }
-      return true;
+      return statements;
     }
 
     // S -> IF
     //   -> for ( EA ; E ; EA ) { Ss }
     //   -> while ( E ) { Ss }
-    static bool Statement(ParseData& data)
+    static AstStatement* Statement(ParseData& data)
     {
       if(data.Top() == Token::IF)
       {
@@ -113,103 +122,77 @@ class Parser
       else if(data.Read(Token::FOR))
       {
         VALID_TOKEN(Token::OPEN_PARAM);
-        VALID_PRODUCTION(Expression(data));
+        VALID_PRODUCTION(AstExpression, init, Expression(data));
         VALID_TOKEN(Token::SEMICOLON);
-        VALID_PRODUCTION(Expression(data));
+        VALID_PRODUCTION(AstExpression, until, Expression(data));
         VALID_TOKEN(Token::SEMICOLON);
-        VALID_PRODUCTION(Expression(data));
+        VALID_PRODUCTION(AstExpression, next, Expression(data));
         VALID_TOKEN(Token::CLOSE_PARAM);
-        VALID_PRODUCTION(ControlFlowBody(data));
-        return true;
+        VALID_PRODUCTION(AstStatements, body, ControlFlowBody(data));
+        return new AstStatement();
       }
       else if(data.Read(Token::WHILE))
       {
         VALID_TOKEN(Token::OPEN_PARAM);
-        VALID_PRODUCTION(Expression(data));
+        VALID_PRODUCTION(AstExpression, until, Expression(data));
         VALID_TOKEN(Token::CLOSE_PARAM);
-        VALID_PRODUCTION(ControlFlowBody(data));
-        return true;
+        VALID_PRODUCTION(AstStatements, body, ControlFlowBody(data));
+        return new AstStatement();
       }
       else if(data.Read(Token::RETURN))
       {
-        Expression(data);
+        AstNode* node = Expression(data);
         VALID_TOKEN(Token::SEMICOLON);
-        return true;
+        return new AstStatement();
       }
       else if(data.Read(Token::SEMICOLON))
       {
-        return true;
+        return new AstExpressionImpl();
       }
       else
       {
         int pos = data.pos;
-        if(Expression(data))
+        AstExpression* node = Expression(data);
+        if(node != nullptr)
         {
           VALID_TOKEN(Token::SEMICOLON);
-          return true;
+          return node;
         }
 
-        // Failed to parse if the pos changed but expression failed
-        return false;
+        return nullptr;
       }
-      return false;
+      return nullptr;
     }
 
     // IF -> if ( E ) CFBODY
-    //    -> if ( E ) CFBODY ELSE_IF
     //    -> if ( E ) CFBODY ELSE
-    static bool StatementIf(ParseData& data)
+    static AstIf* StatementIf(ParseData& data)
     {
       VALID_TOKEN(Token::IF);
       VALID_TOKEN(Token::OPEN_PARAM);
-      VALID_PRODUCTION(Expression(data));
+      VALID_PRODUCTION(AstExpression, condition, Expression(data));
       VALID_TOKEN(Token::CLOSE_PARAM);
-      VALID_PRODUCTION(ControlFlowBody(data));
+      VALID_PRODUCTION(AstStatements, body, ControlFlowBody(data));
 
-      if(data.Top() == Token::ELSE_IF)
+      if(data.Top() == Token::ELSE)
       {
-        return StatementElseIf(data);
+        VALID_PRODUCTION(AstStatements, elseBody, StatementElse(data));
+        return new AstIf(condition, body, elseBody);
       }
-      else if(data.Top() == Token::ELSE)
-      {
-        return StatementElse(data);
-      }
-      return true;
-    }
-
-    // IF -> elif ( E ) CFBODY
-    //    -> elif ( E ) CFBODY ELSE_IF
-    //    -> elif ( E ) CFBODY ELSE
-    static bool StatementElseIf(ParseData& data)
-    {
-      VALID_TOKEN(Token::ELSE_IF);
-      VALID_TOKEN(Token::OPEN_PARAM);
-      VALID_PRODUCTION(Expression(data));
-      VALID_TOKEN(Token::CLOSE_PARAM);
-      VALID_PRODUCTION(ControlFlowBody(data));
-
-      if(data.Top() == Token::ELSE_IF)
-      {
-        return StatementElseIf(data);
-      }
-      else if(data.Top() == Token::ELSE)
-      {
-        return StatementElse(data);
-      }
-      return true;
+      return new AstIf(condition, body);
     }
 
     // ELSE -> else CFBODY
-    static bool StatementElse(ParseData& data)
+    static AstStatements* StatementElse(ParseData& data)
     {
       VALID_TOKEN(Token::ELSE);
-      VALID_PRODUCTION(ControlFlowBody(data));
-      return true;
+      VALID_PRODUCTION(AstStatements, body, ControlFlowBody(data));
+      return body;
     }
 
     // E -> LVALD = EL
     //   -> EL
-    static bool Expression(ParseData& data)
+    static AstExpression* Expression(ParseData& data)
     {
       int pos = data.pos;
       if(LValueDefine(data))
@@ -229,18 +212,20 @@ class Parser
 
     // EL -> EC && EL
     //    -> EC || EL
-    static bool ExpressionLogical(ParseData& data)
+    static AstExpression* ExpressionLogical(ParseData& data)
     {
-      VALID_PRODUCTION(ExpressionCompare(data));
+      VALID_PRODUCTION(AstExpression, left, ExpressionCompare(data));
       if(data.Read(Token::AND))
       {
-        return ExpressionLogical(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionLogical(data));
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::OR))
       {
-        return ExpressionLogical(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionLogical(data));
+        return new AstExpressionImpl();
       }
-      return true;
+      return left;
     }
 
     // EC -> EAS
@@ -250,73 +235,83 @@ class Parser
     //    -> EAS <= EC
     //    -> EAS > EC
     //    -> EAS < EC
-    static bool ExpressionCompare(ParseData& data)
+    static AstExpression* ExpressionCompare(ParseData& data)
     {
-      VALID_PRODUCTION(ExpressionAddSub(data));
+      VALID_PRODUCTION(AstExpression, left, ExpressionAddSub(data));
       if(data.Read(Token::EQUAL))
       {
-        return ExpressionCompare(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionCompare(data));
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::NEQUAL))
       {
-        return ExpressionCompare(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionCompare(data));
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::GTE))
       {
-        return ExpressionCompare(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionCompare(data));
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::LTE))
       {
-        return ExpressionCompare(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionCompare(data));
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::GT))
       {
-        return ExpressionCompare(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionCompare(data));
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::LT))
       {
-        return ExpressionCompare(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionCompare(data));
+        return new AstExpressionImpl();
       }
-      return true;
+      return left;
     }
 
     // EAS -> EMD
     //     -> EMD + EAS
     //     -> EMD - EAS
-    static bool ExpressionAddSub(ParseData& data)
+    static AstExpression* ExpressionAddSub(ParseData& data)
     {
-      VALID_PRODUCTION(ExpressionMulDiv(data));
+      VALID_PRODUCTION(AstExpression, node, ExpressionMulDiv(data));
       if(data.Read(Token::ADD))
       {
-        return ExpressionAddSub(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionAddSub(data));
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::SUB))
       {
-        return ExpressionAddSub(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionAddSub(data));
+        return new AstExpressionImpl();
       }
-      return true;
+      return node;
     }
 
     // EMD -> EV
     //     -> EV * EMD
     //     -> EV / EMD
-    static bool ExpressionMulDiv(ParseData& data)
+    static AstExpression* ExpressionMulDiv(ParseData& data)
     {
-      VALID_PRODUCTION(ExpressionUnary(data));
+      VALID_PRODUCTION(AstExpression, left, ExpressionUnary(data));
       if(data.Read(Token::MUL))
       {
-        return ExpressionMulDiv(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionMulDiv(data));
+        return new AstMul(left, right);
       }
       else if(data.Read(Token::DIV))
       {
-        return ExpressionMulDiv(data);
+        VALID_PRODUCTION(AstExpression, right, ExpressionMulDiv(data));
+        return new AstDiv(left, right);
       }
-      return true;
+      return left;
     }
 
     // EU -> ! EU
     //    -> EP
-    static bool ExpressionUnary(ParseData& data)
+    static AstExpression* ExpressionUnary(ParseData& data)
     {
       if(data.Read(Token::NOT))
       {
@@ -326,20 +321,20 @@ class Parser
       {
         return ExpressionUnary(data);
       }
-      VALID_PRODUCTION(RValue(data));
-      return true;
+      VALID_PRODUCTION(AstExpression, node, RValue(data));
+      return node;
     }
 
     // EP -> ( E )
     //    -> RVAL
-    static bool ExpressionParam(ParseData& data)
+    static AstExpression* ExpressionParam(ParseData& data)
     {
       if(data.Read(Token::OPEN_PARAM))
       {
         return Expression(data);
       }
-      VALID_PRODUCTION(RValue(data));
-      return true;
+      VALID_PRODUCTION(AstExpression, node, RValue(data));
+      return node;
     }
 
     // RVAL -> number
@@ -349,46 +344,47 @@ class Parser
     //      -> name INDEX
     //      -> name ( FARGS )
     //      -> name
-    static bool RValue(ParseData& data)
+    static AstExpression* RValue(ParseData& data)
     {
       if(data.Read(Token::NUMBER))
       {
-        return true;
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::STRING))
       {
-        return true;
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::CHAR))
       {
-        return true;
+        return new AstExpressionImpl();
       }
       else if(data.Read(Token::OPEN_PARAM))
       {
-        VALID_PRODUCTION(Expression(data));
+        VALID_PRODUCTION(AstExpression, node, Expression(data));
         VALID_TOKEN(Token::CLOSE_PARAM);
-        return true;
+        return node;
       }
       else if(data.Read(Token::NAME))
       {
+        AstExpression* topNode = new AstExpressionImpl();
         if(data.Top() == Token::OPEN_SQUARE)
         {
-          VALID_PRODUCTION(Indexing(data));
+          VALID_PRODUCTION(AstNode, node, Indexing(data));
         }
         if(data.Top() == Token::OPEN_PARAM)
         {
           VALID_TOKEN(Token::OPEN_PARAM);
-          VALID_PRODUCTION(FunctionArguments(data));
+          VALID_PRODUCTION(AstNode, node, FunctionArguments(data));
           VALID_TOKEN(Token::CLOSE_PARAM);
         }
-        return true;
+        return topNode;
       }
-      return false;
+      return nullptr;
     }
 
     // LVALD -> LVAL
     //       -> PRIM LVAL
-    static bool LValueDefine(ParseData& data)
+    static AstNode* LValueDefine(ParseData& data)
     {
       Primitive(data);
       return LValue(data);
@@ -396,114 +392,122 @@ class Parser
 
     // LVAL -> name INDEX
     //      -> name
-    static bool LValue(ParseData& data)
+    static AstNode* LValue(ParseData& data)
     {
       if(data.Read(Token::NAME))
       {
         if(data.Top() == Token::OPEN_SQUARE)
         {
-          VALID_PRODUCTION(Indexing(data));
+          VALID_PRODUCTION(AstNode, node, Indexing(data));
         }
-        return true;
+        return new AstNodeImpl();
       }
-      return false;
+      return nullptr;
     }
 
     // INDEX -> [ E ]
-    static bool Indexing(ParseData& data)
+    static AstNode* Indexing(ParseData& data)
     {
       VALID_TOKEN(Token::OPEN_SQUARE);
-      VALID_PRODUCTION(Expression(data));
+      VALID_PRODUCTION(AstNode, node, Expression(data));
       VALID_TOKEN(Token::CLOSE_SQUARE);
-      return true;
+      return new AstNodeImpl();
     }
 
     // FTYPE -> PRIM
     //       -> void
-    static bool FunctionType(ParseData& data)
+    static Type FunctionType(ParseData& data)
     {
-      if(!Primitive(data))
+      Type type = Type::INVALID;
+      if((type = Primitive(data)) == Type::INVALID)
       {
         if(data.Read(Token::VOID))
         {
-          return true;
+          return Type::VOID;
         }
-        return false;
+        return Type::INVALID;
       }
-      return true;
+      return type;
     }
 
     // FARGS -> name
     //       -> name, FARGS
-    static bool FunctionArguments(ParseData& data)
+    static AstNode* FunctionArguments(ParseData& data)
     {
       if(data.Top() == Token::CLOSE_PARAM)
-        return true;
+        return new AstNodeImpl();
 
-      VALID_PRODUCTION(Expression(data));
+      VALID_PRODUCTION(AstNode, node, Expression(data));
       if(data.Read(Token::COMMA))
       {
-        return FunctionArguments(data);
+        VALID_PRODUCTION(AstNode, args, FunctionArguments(data));
+        return node;
       }
-      return true;
+      return node;
     }
 
     // CFBODY -> { Ss }
     //        -> S
-    static bool ControlFlowBody(ParseData& data)
+    static AstStatements* ControlFlowBody(ParseData& data)
     {
       if(data.Top() == Token::OPEN_CURLY)
       {
         VALID_TOKEN(Token::OPEN_CURLY);
-        VALID_PRODUCTION(Statements(data));
+        VALID_PRODUCTION(AstStatements, node, Statements(data));
         VALID_TOKEN(Token::CLOSE_CURLY);
+        return node;
       }
       else
       {
-        VALID_PRODUCTION(Statement(data));
+        VALID_PRODUCTION(AstStatement, node, Statement(data));
+        return new AstStatements(node, nullptr);
       }
-      return true;
     }
 
-    // FPARAMS -> PRIM name
+    // FPARAMS ->
+    //         -> PRIM name
     //         -> PRIM name, FPARAMS
-    static bool FunctionParams(ParseData& data)
+    static AstFuncParams* FunctionParams(ParseData& data)
     {
-      if(data.Top() == Token::CLOSE_PARAM)
-        return true;
-
-      VALID_PRODUCTION(Primitive(data));
-      VALID_TOKEN(Token::NAME);
-      if(data.Read(Token::COMMA))
+      AstFuncParams* top = new AstFuncParams{nullptr, nullptr};
+      while(data.Top() != Token::CLOSE_PARAM)
       {
-        return FunctionParams(data);
+        Type type;
+        if((type = Primitive(data)) == Type::INVALID)
+          return nullptr;
+        VALID_TOKEN(Token::NAME);
+        // TODO: FIX NAME
+        top = new AstFuncParams(new AstFuncParam(new AstName{type}), top);
+        if(!data.Read(Token::COMMA))
+          break;
       }
-      return true;
+
+      return top;
     }
 
     // PRIM -> int
     //      -> float
     //      -> char_k
     //      -> string_k
-    static bool Primitive(ParseData& data)
+    static Type Primitive(ParseData& data)
     {
       if(data.Read(Token::INT))
       {
-        return true;
+        return Type::INT;
       }
       else if(data.Read(Token::FLOAT))
       {
-        return true;
+        return Type::FLOAT;
       }
       else if(data.Read(Token::CHAR_K))
       {
-        return true;
+        return Type::CHAR;
       }
       else if(data.Read(Token::STRING_K))
       {
-        return true;
+        return Type::STRING;
       }
-      return false;
+      return Type::INVALID;
     }
 
     static void PrintError(ParseData& data, Token got, Token expected)

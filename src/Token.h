@@ -92,7 +92,6 @@ std::map<std::string_view, Token> Tokens::reservedTokens{
   {"for", Token::FOR},
   {"while", Token::WHILE},
   {"else", Token::ELSE},
-  {"elif", Token::ELSE_IF},
   {"return", Token::RETURN},
   {"in", Token::IN},
   {"void", Token::VOID},

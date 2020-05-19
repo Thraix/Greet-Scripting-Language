@@ -2,9 +2,9 @@ void function(int i, float x, string test, char c)
 {
   if(a + b * c == b && b < 0)
     test;
-  elif(tset)
+  else if(tset)
     test;
-  elif(test2)
+  else if(test2)
     return true;
   else
     return;
